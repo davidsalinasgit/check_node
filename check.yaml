@@ -1,5 +1,5 @@
 ---
-- name: WinRM precheck (sin colecciones, minimo)
+- name: WinRM precheck (minimo, sin colecciones, sin hostname/ip)
   hosts: all
   gather_facts: false
 
@@ -7,23 +7,30 @@
     win_host: "{{ ansible_host | default(inventory_hostname) }}"
 
   tasks:
-    - name: Runner hostname (nodo donde corre el job)
-      ansible.builtin.command: hostname
+    - name: Runner hostname (via python)
+      ansible.builtin.shell: >
+        sh -lc "python3 -c 'import socket; print(socket.gethostname())' ||
+               python  -c 'import socket; print(socket.gethostname())'"
       register: r_host
       changed_when: false
       delegate_to: localhost
       run_once: true
 
-    - name: Runner IPv4 (intenta ip, si falla usa hostname -I)
-      ansible.builtin.shell: |
-        set -o pipefail
-        (ip -o -4 addr show 2>/dev/null || true) | awk '{print $2, $4}'
-        if ! command -v ip >/dev/null 2>&1; then
-          hostname -I 2>/dev/null || true
-        fi
-      args:
-        executable: /bin/bash
-      register: r_ip
+    - name: Runner src IPv4 hacia el Windows (via python UDP connect)
+      ansible.builtin.shell: >
+        sh -lc "python3 -c 'import socket,sys;
+        t=sys.argv[1];
+        s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);
+        try: s.connect((t,1)); print(s.getsockname()[0])
+        except Exception: print(\"UNKNOWN\")
+        finally: s.close()' {{ win_host }} ||
+        python -c 'import socket,sys;
+        t=sys.argv[1];
+        s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);
+        try: s.connect((t,1)); print(s.getsockname()[0])
+        except Exception: print(\"UNKNOWN\")
+        finally: s.close()' {{ win_host }}"
+      register: r_src_ip
       changed_when: false
       delegate_to: localhost
       run_once: true
@@ -48,21 +55,11 @@
       register: tcp_5986
       failed_when: false
 
-    - name: Ver IP origen seleccionada hacia el Windows (ip route get)
-      ansible.builtin.shell: "ip route get {{ win_host }} 2>/dev/null || true"
-      args:
-        executable: /bin/bash
-      register: route_get
-      changed_when: false
-      delegate_to: localhost
-      run_once: true
-
     - name: Resumen
       ansible.builtin.debug:
         msg:
           runner_hostname: "{{ r_host.stdout | default('') }}"
-          runner_ipv4: "{{ r_ip.stdout_lines | default([]) }}"
-          route_get: "{{ route_get.stdout | default('') }}"
+          runner_src_ip_to_target: "{{ r_src_ip.stdout | default('') }}"
           target: "{{ inventory_hostname }}"
           target_addr: "{{ win_host }}"
           tcp_5985_open: "{{ (tcp_5985.failed is not defined) or (not tcp_5985.failed) }}"

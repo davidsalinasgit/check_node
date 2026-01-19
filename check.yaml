@@ -1,5 +1,5 @@
 ---
-- name: WinRM precheck (minimo, sin colecciones, robusto)
+- name: WinRM precheck (minimo, sin colecciones, estable)
   hosts: windows
   gather_facts: false
 
@@ -8,33 +8,28 @@
 
   tasks:
     - name: Runner hostname (via python)
-      ansible.builtin.shell: >
-        sh -lc "python3 -c 'import socket; print(socket.gethostname())' ||
-               python  -c 'import socket; print(socket.gethostname())'"
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - "import socket; print(socket.gethostname())"
       register: r_host
       changed_when: false
       delegate_to: localhost
       run_once: true
+      failed_when: false
 
-    - name: Runner src IPv4 hacia el Windows (via python UDP connect)
-      ansible.builtin.shell: |
-        sh -lc "python3 - <<'PY' {{ win_host }} || python - <<'PY' {{ win_host }}
-import socket, sys
-t = sys.argv[1]
-s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-try:
-    s.connect((t, 1))
-    print(s.getsockname()[0])
-except Exception:
-    print('UNKNOWN')
-finally:
-    s.close()
-PY"
+    - name: Runner src IPv4 hacia el Windows (best-effort, via python)
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - "import socket; s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.connect(('{{ win_host }}',1)); print(s.getsockname()[0]); s.close()"
       register: r_src_ip
       changed_when: false
-      failed_when: false
       delegate_to: localhost
       run_once: true
+      failed_when: false
 
     - name: TCP check 5985 (WinRM HTTP) desde el runner
       ansible.builtin.wait_for:
@@ -59,7 +54,7 @@ PY"
     - name: Resumen
       ansible.builtin.debug:
         msg:
-          runner_hostname: "{{ r_host.stdout | default('') }}"
+          runner_hostname: "{{ r_host.stdout | default('UNKNOWN') }}"
           runner_src_ip_to_target: "{{ r_src_ip.stdout | default('UNKNOWN') }}"
           target: "{{ inventory_hostname }}"
           target_addr: "{{ win_host }}"

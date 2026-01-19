@@ -1,0 +1,69 @@
+---
+- name: WinRM precheck (sin colecciones, minimo)
+  hosts: windows
+  gather_facts: false
+
+  vars:
+    win_host: "{{ ansible_host | default(inventory_hostname) }}"
+
+  tasks:
+    - name: Runner hostname (nodo donde corre el job)
+      ansible.builtin.command: hostname
+      register: r_host
+      changed_when: false
+      delegate_to: localhost
+      run_once: true
+
+    - name: Runner IPv4 (intenta ip, si falla usa hostname -I)
+      ansible.builtin.shell: |
+        set -o pipefail
+        (ip -o -4 addr show 2>/dev/null || true) | awk '{print $2, $4}'
+        if ! command -v ip >/dev/null 2>&1; then
+          hostname -I 2>/dev/null || true
+        fi
+      args:
+        executable: /bin/bash
+      register: r_ip
+      changed_when: false
+      delegate_to: localhost
+      run_once: true
+
+    - name: TCP check 5985 (WinRM HTTP) desde el runner
+      ansible.builtin.wait_for:
+        host: "{{ win_host }}"
+        port: 5985
+        timeout: 3
+        state: started
+      delegate_to: localhost
+      register: tcp_5985
+      failed_when: false
+
+    - name: TCP check 5986 (WinRM HTTPS) desde el runner
+      ansible.builtin.wait_for:
+        host: "{{ win_host }}"
+        port: 5986
+        timeout: 3
+        state: started
+      delegate_to: localhost
+      register: tcp_5986
+      failed_when: false
+
+    - name: Ver IP origen seleccionada hacia el Windows (ip route get)
+      ansible.builtin.shell: "ip route get {{ win_host }} 2>/dev/null || true"
+      args:
+        executable: /bin/bash
+      register: route_get
+      changed_when: false
+      delegate_to: localhost
+      run_once: true
+
+    - name: Resumen
+      ansible.builtin.debug:
+        msg:
+          runner_hostname: "{{ r_host.stdout | default('') }}"
+          runner_ipv4: "{{ r_ip.stdout_lines | default([]) }}"
+          route_get: "{{ route_get.stdout | default('') }}"
+          target: "{{ inventory_hostname }}"
+          target_addr: "{{ win_host }}"
+          tcp_5985_open: "{{ (tcp_5985.failed is not defined) or (not tcp_5985.failed) }}"
+          tcp_5986_open: "{{ (tcp_5986.failed is not defined) or (not tcp_5986.failed) }}"

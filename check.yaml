@@ -1,6 +1,6 @@
 ---
-- name: WinRM precheck (minimo, sin colecciones, sin hostname/ip)
-  hosts: all
+- name: WinRM precheck (minimo, sin colecciones, robusto)
+  hosts: windows
   gather_facts: false
 
   vars:
@@ -17,21 +17,22 @@
       run_once: true
 
     - name: Runner src IPv4 hacia el Windows (via python UDP connect)
-      ansible.builtin.shell: >
-        sh -lc "python3 -c 'import socket,sys;
-        t=sys.argv[1];
-        s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);
-        try: s.connect((t,1)); print(s.getsockname()[0])
-        except Exception: print(\"UNKNOWN\")
-        finally: s.close()' {{ win_host }} ||
-        python -c 'import socket,sys;
-        t=sys.argv[1];
-        s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);
-        try: s.connect((t,1)); print(s.getsockname()[0])
-        except Exception: print(\"UNKNOWN\")
-        finally: s.close()' {{ win_host }}"
+      ansible.builtin.shell: |
+        sh -lc "python3 - <<'PY' {{ win_host }} || python - <<'PY' {{ win_host }}
+import socket, sys
+t = sys.argv[1]
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+try:
+    s.connect((t, 1))
+    print(s.getsockname()[0])
+except Exception:
+    print('UNKNOWN')
+finally:
+    s.close()
+PY"
       register: r_src_ip
       changed_when: false
+      failed_when: false
       delegate_to: localhost
       run_once: true
 
@@ -59,7 +60,7 @@
       ansible.builtin.debug:
         msg:
           runner_hostname: "{{ r_host.stdout | default('') }}"
-          runner_src_ip_to_target: "{{ r_src_ip.stdout | default('') }}"
+          runner_src_ip_to_target: "{{ r_src_ip.stdout | default('UNKNOWN') }}"
           target: "{{ inventory_hostname }}"
           target_addr: "{{ win_host }}"
           tcp_5985_open: "{{ (tcp_5985.failed is not defined) or (not tcp_5985.failed) }}"

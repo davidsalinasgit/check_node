@@ -1,6 +1,6 @@
 ---
 - name: WinRM precheck (minimo, sin colecciones, estable)
-  hosts: windows
+  hosts: all
   gather_facts: false
 
   vars:
